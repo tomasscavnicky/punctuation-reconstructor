@@ -1,3 +1,6 @@
+# original script autor: Karel Benes
+# modified by: Tomas Scavnicky
+
 import IPython
 
 import sys
@@ -34,10 +37,72 @@ ps = {NO_PUNCT:0, PERIOD:1, COMMA:2}
 
 
 
+def indices_to_one_hot(inds, width):
+   one_hot = np.zeros((len(inds), width), dtype=np.bool) 
+   one_hot[np.arange(len(inds)), inds] = 1
+   return one_hot
+
+
+def hard_confusion_matrix(predictions, targets, n_classes):
+    cm = np.zeros((n_classes, n_classes), dtype=np.int)
+    for y, t in zip(predictions, targets):
+        cm[t][y] += 1
+
+    return cm
+
+def seq_to_w2v_fea(inds):
+    vector_repr = [word2vec.w2v(w) for w in inds]
+    np_repr = np.asarray(vector_repr, dtype=np.float32)
+    return np_repr
+
+def prep_xy_from_data(batch_data, input_width, labels_width):
+    # get the sequences
+    batch_inds = map(lambda sample: sample[0], batch_data)
+    X = np.asarray([seq_to_w2v_fea(inds) for inds in batch_inds])
+
+    # get the labels of sequences
+    batch_labels = map(lambda sample: sample[1], batch_data)
+    y = np.asarray(indices_to_one_hot(batch_labels, labels_width))
+
+    return X, y, batch_labels
+
+def show_scores(pos_scores, neg_scores, title="Figure"):
+    if args.img_dir == None:
+        return
+
+    point_scores_pos = [x[1] for x in pos_scores]
+    point_scores_neg = [x[1] for x in neg_scores]
+
+    plt.figure()
+    x,bins,p = plt.hist([point_scores_pos, point_scores_neg], bins=20,
+            stacked=False, label=("Puncted samples", "Nonpuncted samples"),
+            range=(0.0,1.0), histtype='step')
+    plt.title(title)
+    plt.legend(loc='upper left')
+    plt.savefig(args.img_dir + '/' + title + ".pdf",bbox_inches='tight')
+
+
+def get_f1_score(conf_matrix):
+    corr_punct = float(conf_matrix[1][1])
+    misses = float(conf_matrix[1][0])
+    false_positives = float(conf_matrix[0][1])
+
+    try:
+        r = corr_punct/(corr_punct + misses)
+        p = corr_punct/(corr_punct + false_positives) 
+        f1 = 2/(1/r + 1/p)
+    except ZeroDivisionError:
+        f1 = float("nan")
+
+    return f1
+
+
+
+
 def run_epoch(model, train_pcts, train_npcts, valid_data, batch_size, epoch_name, w2v):
     epoch_results = []
 
-    print "Training:"
+    print "Training: "
     train_scores_punct = []
     train_scores_nonpunct = []
     train_cm = np.zeros((len(ps), len(ps)), dtype=np.int)
@@ -115,7 +180,7 @@ def run_epoch(model, train_pcts, train_npcts, valid_data, batch_size, epoch_name
 
 
 
-def get_new_model(in_width, lstm_hidden, out_width):
+def get_new_model(in_width, lstm_hidden, out_width, batch_size):
     model = Sequential()
     if args.time_dist_dense:
         model.add(LSTM(in_width, lstm_hidden, return_sequences=True))
@@ -124,9 +189,11 @@ def get_new_model(in_width, lstm_hidden, out_width):
         if args.rnn:
             model.add(SimpleRNN(in_width, lstm_hidden, return_sequences=False))
         else:
-            model.add(LSTM(in_width, lstm_hidden, return_sequences=False))
+            print "in_width: ", str(in_width)
+            print "lstm_hidden: ", str(lstm_hidden[0])
+            model.add(LSTM(lstm_hidden[0] , batch_input_shape=(None, batch_size, in_width), return_sequences=False))
         model.add(Dropout(args.dropout))
-        model.add(Dense(lstm_hidden, out_width))
+        model.add(Dense(lstm_hidden[0]))
     model.add(Activation('softmax'))
     optimizer = Adagrad(clipnorm=args.clipnorm)
     model.compile(loss='categorical_crossentropy', optimizer=optimizer)
@@ -256,29 +323,35 @@ if __name__ == '__main__':
 
     print 'Building model...'
 
-    model = get_new_model(word2vec.vector_len(), args.n_hidden, len(ps))
+    model = get_new_model(word2vec.vector_len(), args.n_hidden, len(ps), args.batch_size)
 
 
     if args.n_epochs > 0:
-        print 'Fitting to data'
+        print 'Fitting to data...'
 
         if args.shuffle_by_sort:
             train_pcts.sort(key = lambda seq: unigram_difficulty(seq[0], unigrams))
             train_npcts.sort(key = lambda seq: unigram_difficulty(seq[0], unigrams))
 
 
-            for epoch_no in range(args.n_epochs):
-                print "\nEpoch number:", epoch_no
+        for epoch_no in range(args.n_epochs):
+            print "\nEpoch number:", epoch_no
 
-                this_epoch_portion = min([(epoch_no+1)*args.epochal_increase, 1.0])
-        
+            this_epoch_portion = min([(epoch_no+1)*args.epochal_increase, 1.0])
+    
 
-                epoch_train_pos = train_pcts[:int(this_epoch_portion*len(train_pcts))]
-                epoch_train_neg = train_npcts[:int(this_epoch_portion*len(train_npcts))]
+            epoch_train_pos = train_pcts[:int(this_epoch_portion*len(train_pcts))]
+            epoch_train_neg = train_npcts[:int(this_epoch_portion*len(train_npcts))]
 
-                random.shuffle(epoch_train_pos)
-                random.shuffle(epoch_train_neg)
+            random.shuffle(epoch_train_pos)
+            random.shuffle(epoch_train_neg)
 
+            run_epoch(model, epoch_train_pos, epoch_train_neg, valid_data, batch_size=args.batch_size, epoch_name="Epoch " + str(epoch_no+1), w2v=word2vec)
+
+        if args.model_to != None:
+            model.save_weights(args.model_to, overwrite=True)
+        sys.stderr.close()
+        sys.stderr = sys.__stderr__
 
 
 

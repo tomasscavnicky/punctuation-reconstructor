@@ -1,0 +1,1 @@
+python w2v_hard_seq_tsc.py --n_hidden 32 --dropout 0.2 --n_epochs 20 --batch_size 128 --sample_len 13 --target_ind 10 --neg_samples_ratio 15 --w2v_file data/trained-w2v/glove.6B.300d.txt --clipnorm 50 --model_to /homes/eva/xs/xscavn00/Speech/teckator_tsc02 --verbose 0 data/ptb_train.all
