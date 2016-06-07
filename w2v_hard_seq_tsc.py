@@ -96,7 +96,10 @@ def get_f1_score(conf_matrix):
 
     return f1
 
-
+def sep_pos_neg_res(results, labels):
+    positive = [res for res,lab in zip(results, labels) if lab != 0]
+    negative = [res for res,lab in zip(results, labels) if lab == 0]
+    return positive, negative
 
 
 def run_epoch(model, train_pcts, train_npcts, valid_data, batch_size, epoch_name, w2v):
@@ -126,7 +129,7 @@ def run_epoch(model, train_pcts, train_npcts, valid_data, batch_size, epoch_name
         train_scores_punct += pos_res
         train_scores_nonpunct += neg_res
 
-        (loss, acc) = model.train_on_batch(X, y, accuracy=True)
+        (loss, acc) = model.train_on_batch(X, y)
         if args.verbose == 1:
             train_progbar.add(1, [('loss', loss), ('acc', acc)])
         epoch_results.append((loss, acc))
@@ -162,7 +165,7 @@ def run_epoch(model, train_pcts, train_npcts, valid_data, batch_size, epoch_name
         valid_scores_punct += pos_res
         valid_scores_nonpunct += neg_res
 
-        (loss, acc) = model.test_on_batch(X, y, accuracy=True)
+        (loss, acc) = model.test_on_batch(X, y)
         if args.verbose == 1:
             valid_progbar.add(1, [('loss', loss), ('acc', acc)])
         valid_results.append((loss, acc))
@@ -189,14 +192,12 @@ def get_new_model(in_width, lstm_hidden, out_width, batch_size):
         if args.rnn:
             model.add(SimpleRNN(in_width, lstm_hidden, return_sequences=False))
         else:
-            print "in_width: ", str(in_width)
-            print "lstm_hidden: ", str(lstm_hidden[0])
-            model.add(LSTM(lstm_hidden[0] , batch_input_shape=(None, batch_size, in_width), return_sequences=False))
+            model.add(LSTM(lstm_hidden[0] , input_dim=in_width, return_sequences=False))
         model.add(Dropout(args.dropout))
-        model.add(Dense(lstm_hidden[0]))
+        model.add(Dense(out_width))
     model.add(Activation('softmax'))
     optimizer = Adagrad(clipnorm=args.clipnorm)
-    model.compile(loss='categorical_crossentropy', optimizer=optimizer)
+    model.compile(loss='categorical_crossentropy', metrics=['accuracy'], optimizer=optimizer)
     return model
 
 
