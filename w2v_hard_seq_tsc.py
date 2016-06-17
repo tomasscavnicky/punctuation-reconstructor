@@ -181,23 +181,41 @@ def run_epoch(model, train_pcts, train_npcts, valid_data, batch_size, epoch_name
 
 
 
+def generate_layer(ltype, in_width, out_width, position):
+    if ltype=='ff':
+        layer = Dense(out_width, input_dim=in_width)
+    elif ltype=='rnn':
+        layer = SimpleRNN(out_width, input_dim=in_width, return_sequences=False if position=="last" else True)
+    elif ltype=='lstm':
+        layer = LSTM(out_width , input_dim=in_width, return_sequences=False if position=="last" else True)
+    return layer
 
 
-def get_new_model(in_width, lstm_hidden, out_width, batch_size):
+def get_new_model(in_width, lstm_hidden, out_width, batch_size, ltype):
     model = Sequential()
-    if args.time_dist_dense:
-        model.add(LSTM(in_width, lstm_hidden, return_sequences=True))
-        model.add(TimeDistributedDense(lstm_hidden, out_width))
-    else:
-        if args.rnn:
-            model.add(SimpleRNN(in_width, lstm_hidden, return_sequences=False))
-        else:
-            model.add(LSTM(lstm_hidden[0] , input_dim=in_width, return_sequences=False))
-        model.add(Dropout(args.dropout))
-        model.add(Dense(out_width))
+#    if args.time_dist_dense:
+#        model.add(LSTM(in_width, lstm_hidden, return_sequences=True))
+#        model.add(TimeDistributedDense(lstm_hidden, out_width))
+#    else:
+#        if args.rnn:
+#            model.add(SimpleRNN(in_width, lstm_hidden, return_sequences=False))
+#        else:
+    print "Number of hidden layers:", args.depth
+#    model.add(LSTM(lstm_hidden , input_dim=in_width, return_sequences=False if args.depth == 0 else True))
+    
+    for i in range(args.depth):
+        model.add(generate_layer(ltype, in_width, lstm_hidden, "last" if i+1 == args.depth else "first" if i==0 else "middle"))
+#        model.add(LSTM(lstm_hidden , input_dim=in_width, return_sequences=False if i+1 == args.depth else True))
+    model.add(Dropout(args.dropout))
+    model.add(Dense(out_width))
     model.add(Activation('softmax'))
+
     optimizer = Adagrad(clipnorm=args.clipnorm)
+
     model.compile(loss='categorical_crossentropy', metrics=['accuracy'], optimizer=optimizer)
+
+    from keras.utils.visualize_util import plot
+    plot(model, show_shapes=True, to_file='model.png')
     return model
 
 
@@ -224,7 +242,7 @@ if __name__ == '__main__':
                             help="use all lstm values as input to softmax")
     parser.add_argument("--n_epochs", type=int, default=0,
                             help="number of training epochs")
-    parser.add_argument("--n_hidden", type=int, nargs=1,
+    parser.add_argument("--n_hidden", type=int,
                             help="number of hidden units")
     parser.add_argument("--batch_size", type=int, default=32,
                             help="number of examples in batch")
@@ -243,7 +261,13 @@ if __name__ == '__main__':
     parser.add_argument("--dropout", type=float, default=0,
                             help="dropout on top of recursive layer")
     parser.add_argument("--test_on", help="file with test examples")
+
     parser.add_argument("--blind_test_on", help="file with text to punctate")
+
+    parser.add_argument("--depth", type=int, nargs='?', const=0, default=0, help="number of hidden layers")
+
+    parser.add_argument("--hidden_type", choices=['rnn', 'lstm', 'ff'], help="type of hidden layers")
+
     parser.add_argument("train_file", nargs=1, help="file with training data")
     args = parser.parse_args()
 
@@ -252,6 +276,12 @@ if __name__ == '__main__':
     if args.target_ind == args.sample_len:
         args.target_ind = True # sequential target
 
+    if args.depth < 0:
+        print "Not possible to set negative depth of neural network"
+	args.depth = 0
+
+#    if args.depth > 0:
+#        args.depth -= 1
 
     print "User config:", args
 
@@ -280,11 +310,7 @@ if __name__ == '__main__':
         print "creating examples..."
         npcts = []
         pcts = []
-        index = 0
         for seq, target in SeqGen(text.split(), identity, w2t_f, args.sample_len, "<unk>", args.target_ind):
-            if index < 50:
-                print seq, target
-                index += 1
             if target == ps[NO_PUNCT]:
                 npcts += [(seq, target)]
             else:
@@ -324,7 +350,7 @@ if __name__ == '__main__':
 
     print 'Building model...'
 
-    model = get_new_model(word2vec.vector_len(), args.n_hidden, len(ps), args.batch_size)
+    model = get_new_model(word2vec.vector_len(), args.n_hidden, len(ps), args.batch_size, args.hidden_type)
 
 
     if args.n_epochs > 0:
@@ -351,6 +377,7 @@ if __name__ == '__main__':
 
         if args.model_to != None:
             model.save_weights(args.model_to, overwrite=True)
+
         sys.stderr.close()
         sys.stderr = sys.__stderr__
 
